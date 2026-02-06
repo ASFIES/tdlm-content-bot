@@ -5,7 +5,7 @@ import time
 import random
 import base64
 import ast
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Dict, Optional, Callable, List
 
 import gspread
 from gspread.exceptions import WorksheetNotFound
@@ -71,7 +71,7 @@ def _load_creds_info() -> Dict[str, Any]:
 
     raw = _strip_wrapping_quotes(raw)
 
-    # Soporta si te pasan ruta a archivo
+    # Soporta si te pasan ruta a archivo (debug/local)
     if raw.lower().endswith(".json") and os.path.exists(raw):
         with open(raw, "r", encoding="utf-8") as f:
             raw = f.read().strip()
@@ -114,6 +114,9 @@ def get_gspread_client(scopes: Optional[list] = None) -> gspread.Client:
 
 
 def with_backoff(fn: Callable, *args, tries: int = 5, base_sleep: float = 0.7, **kwargs):
+    """
+    Reintentos simples con backoff para llamadas a gspread/Google APIs.
+    """
     last_err = None
     for i in range(tries):
         try:
@@ -151,7 +154,7 @@ def open_worksheet(
     cols: int = 50,
 ) -> gspread.Worksheet:
     """
-    Compatibilidad: tu código actual importa open_worksheet desde utils.sheets.
+    Compatibilidad: tu código importa open_worksheet desde utils.sheets.
     """
     sh = open_spreadsheet(spreadsheet_name_or_key_or_url)
     try:
@@ -176,3 +179,34 @@ def col_idx(header_map: Dict[str, int], header_name: str) -> int:
         if (k or "").strip().lower() == low:
             return v
     raise KeyError(f"Columna no encontrada en encabezados: {header_name}")
+
+
+# =========================================================
+# Helpers "safe" (los pide tu content_bot.py)
+# =========================================================
+
+def get_all_values_safe(ws: gspread.Worksheet, default: Optional[List[List[str]]] = None) -> List[List[str]]:
+    """
+    Devuelve toda la hoja como lista de listas.
+    Si falla, regresa default o [].
+    """
+    try:
+        return with_backoff(ws.get_all_values)
+    except Exception:
+        return default if default is not None else []
+
+
+def row_values_safe(ws: gspread.Worksheet, row: int, default: Optional[List[str]] = None) -> List[str]:
+    try:
+        return with_backoff(ws.row_values, row)
+    except Exception:
+        return default if default is not None else []
+
+
+def update_cell_safe(ws: gspread.Worksheet, row: int, col: int, value: Any) -> None:
+    with_backoff(ws.update_cell, row, col, value)
+
+
+def append_row_safe(ws: gspread.Worksheet, values: List[Any], value_input_option: str = "RAW") -> None:
+    # gspread: append_row(values, value_input_option=...)
+    with_backoff(ws.append_row, values, value_input_option=value_input_option)
